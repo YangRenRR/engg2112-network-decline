@@ -57,6 +57,9 @@ python src/decline_rate.py --from 2025 4 --to 2026 1
 
 # Build the modelling table: one row per region per quarter, 2019 Q1 to 2026 Q1
 python src/build_panel.py --start 2019 1 --end 2026 1 --out data/panel.csv
+
+# Train on 2019-2023, test on 2024-2026
+python src/model.py --panel data/panel.csv --split 2024
 ```
 
 `panel.csv` is one row per region per quarter:
@@ -101,6 +104,42 @@ against 240-280 in 2025-26, with total tests roughly halving. Models trained
 on older quarters are therefore fitted on denser data than they will see at
 prediction time, which is worth stating as a limitation.
 
+### First model results
+
+Trained on 2019-2023 and tested on 2024-2026, predicting whether a region
+declines in the **following** quarter:
+
+| | Recall | Precision | Regions flagged |
+|---|---|---|---|
+| Baseline: never flag anything | 0.00 | – | 0% |
+| Baseline: flag every region | 1.00 | 0.125 | 100% |
+| **Random forest** | **0.485** | **0.367** | **16.5%** |
+
+The model finds about half the regions that go on to decline, and when it
+flags a region it is right roughly a third of the time. Against the base rate
+of 12.5% that is close to a threefold improvement in precision, while
+inspecting only a sixth of the state.
+
+Neither baseline is usable: never flagging finds nothing, and flagging
+everything is the reactive status quo with extra steps. The useful comparison
+is the last row against the second, and it says the same budget of
+inspections can be aimed about three times better.
+
+The most useful features are the change in speed into the current quarter,
+the number of tiles and tests in a region, and the current speed itself.
+Weather features have not been added yet.
+
+### Predicting the current quarter is not a task
+
+A first version scored perfect accuracy, which was the bug announcing itself.
+The label is derived from `pct_change`, and `pct_change` was also a feature,
+so the model was reading the answer rather than predicting it.
+
+The target is now the **following** quarter's decline, and performance fell to
+the numbers above. This is worth recording because the proposal did not
+distinguish between describing a decline that has already happened and
+forecasting one that has not.
+
 ### Aggregation is required, not optional
 
 At the raw 600 m tile level, very few tiles have data in **both** quarters,
@@ -122,9 +161,9 @@ our plan from tile-level to region-level modelling.
 - [x] Build the region-quarter panel for 2019 Q1 to 2026 Q1
 - [ ] Replace the coarse grid with a spatial join on ABS SA2 boundaries
 - [ ] Add BoM weather features aggregated to quarters
-- [ ] Baseline: assume next quarter equals this quarter
-- [ ] Train and tune the Random Forest classifier
-- [ ] Time-based validation; report recall by area type
+- [x] Baselines and a first random forest, validated by time
+- [ ] Report recall separately for urban, outer suburban and regional areas
+- [ ] Tune the decision threshold against an inspection budget
 - [ ] Produce the maintenance priority ranking
 
 ## Notes
