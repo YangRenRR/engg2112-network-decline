@@ -34,6 +34,14 @@ WEATHER_FEATURES = [
     "total_rain_mm", "wet_days", "max_daily_rain_mm",
 ]
 
+LAG_FEATURES = [
+    "chg_1", "chg_2", "chg_3",      # change over the last one, two, three quarters
+    "speed_vs_own_mean",            # how far below its own long-run level it sits
+    "decline_rate_so_far",          # how often this region has declined before
+    "tests_chg",                    # is usage growing or draining away
+    "quarters_observed",            # how much history we have for this region
+]
+
 FEATURES = [
     "down_mbps",        # speed this quarter
     "up_mbps",
@@ -73,6 +81,29 @@ def add_weather(df: pd.DataFrame, weather_path) -> pd.DataFrame:
     return df.merge(w, on=["wlat", "wlon", "year", "quarter"], how="left")
 
 
+def add_lags(df: pd.DataFrame) -> pd.DataFrame:
+    """Features describing how a region has been moving, not just where it is.
+
+    One quarter of change cannot tell a region sliding for a year apart from
+    one that had a bad quarter and recovered. Everything here is built from
+    quarters strictly before the row it describes.
+    """
+    df = df.sort_values(["region", "t"]).copy()
+    g = df.groupby("region")
+
+    for k in (1, 2, 3):
+        past = g.down_mbps.shift(k)
+        gap = df.t - g.t.shift(k)
+        df[f"chg_{k}"] = ((df.down_mbps - past) / past).where(gap == k)
+
+    df["tests_chg"] = (df.tests - g.tests.shift(1)) / g.tests.shift(1)
+    df["speed_vs_own_mean"] = df.down_mbps / df.region_mean - 1
+    df["quarters_observed"] = g.cumcount()
+    df["decline_rate_so_far"] = (g.declined
+                                 .transform(lambda s: s.shift(1).expanding().mean()))
+    return df
+
+
 def add_area_type(df: pd.DataFrame) -> pd.DataFrame:
     """Split regions into three bands by how much they are used.
 
@@ -108,10 +139,13 @@ def evaluate(name, y_true, y_pred):
     }
 
 
-def main(panel_path, split_year, n_estimators, threshold, seed, weather_path):
+def main(panel_path, split_year, n_estimators, threshold, seed, weather_path,
+         lags=True):
     df = pd.read_csv(panel_path)
-    df = add_area_type(add_history(add_target(df)))
+    df = add_area_type(add_lags(add_history(add_target(df))))
     features = list(FEATURES)
+    if lags:
+        features += LAG_FEATURES
     if weather_path:
         df = add_weather(df, weather_path)
         features += WEATHER_FEATURES
@@ -189,5 +223,8 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--weather", default=None,
                    help="path to weather.csv; omit to train without weather")
+    p.add_argument("--no-lags", action="store_true",
+                   help="train without the multi-quarter history features")
     a = p.parse_args()
-    main(a.panel, a.split, a.trees, a.threshold, a.seed, a.weather)
+    main(a.panel, a.split, a.trees, a.threshold, a.seed, a.weather,
+         lags=not a.no_lags)
