@@ -34,7 +34,7 @@ Ookla speeds + BoM weather + ABS population
 | Data | Source | Granularity | Licence |
 |---|---|---|---|
 | Mobile download/upload speed, latency, tests | [Ookla Open Data](https://github.com/teamookla/ookla-open-data) | Quarterly, ~600 m tile | CC BY-NC-SA 4.0 |
-| Temperature, rainfall | Bureau of Meteorology, Climate Data Online | Daily, by station | Open |
+| Temperature, rainfall | [Open-Meteo historical archive](https://open-meteo.com/) | Daily, any coordinate | Open |
 | Population | Australian Bureau of Statistics | Annual, by SA2 | Open |
 
 Ookla tiles are available from **2019 Q1 to 2026 Q1** (28 quarters). Files are
@@ -58,8 +58,11 @@ python src/decline_rate.py --from 2025 4 --to 2026 1
 # Build the modelling table: one row per region per quarter, 2019 Q1 to 2026 Q1
 python src/build_panel.py --start 2019 1 --end 2026 1 --out data/panel.csv
 
+# Quarterly weather features for every region in the panel
+python src/weather.py --panel data/panel.csv --out data/weather.csv
+
 # Train on 2019-2023, test on 2024-2026
-python src/model.py --panel data/panel.csv --split 2024
+python src/model.py --panel data/panel.csv --split 2024 --weather data/weather.csv
 ```
 
 `panel.csv` is one row per region per quarter:
@@ -129,6 +132,42 @@ The most useful features are the change in speed into the current quarter,
 the number of tiles and tests in a region, and the current speed itself.
 Weather features have not been added yet.
 
+### Weather adds nothing at this granularity
+
+| | Recall | Precision | Flagged |
+|---|---|---|---|
+| Without weather | 0.485 | 0.367 | 16.5% |
+| With weather | 0.456 | 0.377 | 15.1% |
+
+No weather feature appears in the eight most useful features. Hot days,
+heavy rain days and quarterly rainfall totals carry almost no signal about
+whether a region's speed will fall next quarter.
+
+This is a result rather than a failure. Weather is fetched per two-degree
+cell, roughly 200 km, and summarised to a whole quarter, so a storm that
+knocks out a tower for two days is averaged away long before the model sees
+it. The proposal assumed weather would matter; at the granularity open data
+allows, it does not.
+
+### The model fails where it matters most
+
+| Area type | Regions | Base rate | Recall | Precision | Flagged |
+|---|---|---|---|---|---|
+| Urban | 185 | 11.3% | 0.462 | 0.400 | 13.1% |
+| Outer | 54 | 20.9% | 0.442 | 0.322 | 28.6% |
+| **Regional** | **10** | **5.9%** | **0.000** | **0.000** | 17.6% |
+
+Bands are set by each region's median number of speed tests, standing in for
+population until ABS figures are joined.
+
+The regional band contains ten regions and seventeen labelled rows, and the
+model catches none of their declines. This is the equity problem the proposal
+predicted, measured: speed tests are run by people who choose to run them, so
+sparsely populated areas produce too little data to model, and those are the
+areas with the weakest coverage to begin with. Any deployment would have to
+flag these regions for human review rather than trust a prediction, and a
+single average score would have hidden this entirely.
+
 ### Predicting the current quarter is not a task
 
 A first version scored perfect accuracy, which was the bug announcing itself.
@@ -160,9 +199,9 @@ our plan from tile-level to region-level modelling.
 - [x] Measure the base rate of decline at several thresholds
 - [x] Build the region-quarter panel for 2019 Q1 to 2026 Q1
 - [ ] Replace the coarse grid with a spatial join on ABS SA2 boundaries
-- [ ] Add BoM weather features aggregated to quarters
+- [x] Add quarterly weather features (Open-Meteo, in place of BoM)
 - [x] Baselines and a first random forest, validated by time
-- [ ] Report recall separately for urban, outer suburban and regional areas
+- [x] Report recall separately for urban, outer suburban and regional areas
 - [ ] Tune the decision threshold against an inspection budget
 - [ ] Produce the maintenance priority ranking
 
