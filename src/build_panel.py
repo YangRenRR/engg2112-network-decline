@@ -35,11 +35,11 @@ def quarters(start, end):
         y, q = (y + 1, 1) if q == 4 else (y, q + 1)
 
 
-def load_quarter(con, year, quarter, prefixes, min_tests):
+def load_quarter(con, year, quarter, prefixes, min_tests, region_zoom=REGION_ZOOM):
     """Aggregate one quarter of tiles into regions."""
     where = " OR ".join(f"quadkey LIKE '{p}%'" for p in prefixes)
     sql = f"""
-        SELECT substr(quadkey, 1, {REGION_ZOOM})              AS region,
+        SELECT substr(quadkey, 1, {region_zoom})              AS region,
                sum(avg_d_kbps * tests) / sum(tests) / 1000.0  AS down_mbps,
                sum(avg_u_kbps * tests) / sum(tests) / 1000.0  AS up_mbps,
                sum(avg_lat_ms * tests) / sum(tests)           AS lat_ms,
@@ -57,7 +57,7 @@ def load_quarter(con, year, quarter, prefixes, min_tests):
 
 
 def build(start=(2019, 1), end=(2026, 1), bbox=NSW, min_tests=50,
-          threshold=0.20, verbose=True):
+          threshold=0.20, verbose=True, region_zoom=REGION_ZOOM):
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
     prefixes = bbox_prefixes(bbox["xmin"], bbox["ymin"],
@@ -66,7 +66,8 @@ def build(start=(2019, 1), end=(2026, 1), bbox=NSW, min_tests=50,
     frames = []
     for year, quarter in quarters(start, end):
         try:
-            df = load_quarter(con, year, quarter, prefixes, min_tests)
+            df = load_quarter(con, year, quarter, prefixes, min_tests,
+                              region_zoom)
         except Exception as exc:                      # quarter not published yet
             if verbose:
                 print(f"  {year} Q{quarter}: skipped ({type(exc).__name__})")
@@ -107,11 +108,14 @@ if __name__ == "__main__":
     p.add_argument("--end", nargs=2, type=int, default=[2026, 1])
     p.add_argument("--min-tests", type=int, default=50)
     p.add_argument("--threshold", type=float, default=0.20)
+    p.add_argument("--zoom", type=int, default=REGION_ZOOM,
+                   help="quadkey prefix length; lower means larger regions")
     p.add_argument("--out", default="data/panel.csv")
     a = p.parse_args()
 
     panel = build(tuple(a.start), tuple(a.end),
-                  min_tests=a.min_tests, threshold=a.threshold)
+                  min_tests=a.min_tests, threshold=a.threshold,
+                  region_zoom=a.zoom)
     panel.to_csv(a.out, index=False)
 
     labelled = panel["declined"].notna().sum()
