@@ -76,6 +76,12 @@ python src/where_rf_wins.py
 
 # Daily download speeds from Measurement Lab
 python src/mlab.py --start 2026-06-01 --end 2026-08-31 --out data/mlab_daily.csv
+
+# Ask the weather and forecasting questions again, a day at a time
+python src/daily.py --daily data/mlab_daily.csv
+
+# Rank every region for the next quarter and write the dashboard's input
+python src/export_predictions.py --panel data/panel.csv --out ui
 ```
 
 `panel.csv` is one row per region per quarter:
@@ -229,6 +235,45 @@ knocks out a tower for two days is averaged away long before the model sees
 it. The proposal assumed weather would matter; at the granularity open data
 allows, it does not.
 
+### The daily check confirms both quarterly conclusions
+
+A quarter is a long time to average over, so weather could plausibly have been
+hidden by it. Measurement Lab publishes individual speed tests with timestamps,
+which allows the same two questions to be asked a day at a time. 92 days of
+Australian tests were collected, 83,626 tests in total.
+
+Weather still explains nothing. Nothing beats simply predicting the mean:
+
+| model | MAE |
+| --- | --- |
+| predicting the mean | 7.24 Mbit/s |
+| sample size + weekday | 7.48 Mbit/s |
+| the same + weather | 7.89 Mbit/s |
+
+The strongest weather correlation is wind speed at +0.197, and its sign is
+wrong: higher wind goes with faster speeds. This is noise.
+
+Tomorrow's change is more predictable than next quarter's, but for the same
+reason as before:
+
+| model | MAE |
+| --- | --- |
+| predict no change | 0.140 |
+| repeat today | 0.240 |
+| mean reversion (k=-0.773) | **0.105** |
+| random forest | 0.108 |
+
+The forest loses to a single fitted parameter here, where at quarterly
+resolution it won narrowly. With 51 training days it has nothing to learn from.
+The fitted k of -0.773 is far stronger than the quarterly 0.07, which suggests
+much of the daily movement is sampling noise rebounding rather than real change:
+daily test counts range from 177 to 5,152.
+
+This series is Australia-wide rather than per region, so it cannot produce a
+maintenance ranking and does not replace the panel. Its value is that the
+quarterly conclusions survive a change of data source, time granularity and
+target.
+
 ### The model fails where it matters most
 
 | Area type | Regions | Base rate | Recall | Precision | Flagged |
@@ -284,7 +329,7 @@ our plan from tile-level to region-level modelling.
 - [x] Report recall separately for urban, outer suburban and regional areas
 - [x] Evaluate against an inspection budget rather than a fixed threshold
 - [x] Test the model against a mean-reversion baseline
-- [ ] Daily-resolution check of the weather question using M-Lab
+- [x] Daily-resolution check of the weather question using M-Lab
 - [ ] Variable region size so sparse areas have enough data to model
 - [ ] Produce the maintenance priority ranking
 
