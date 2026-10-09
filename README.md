@@ -63,6 +63,19 @@ python src/weather.py --panel data/panel.csv --out data/weather.csv
 
 # Train on 2019-2023, test on 2024-2026
 python src/model.py --panel data/panel.csv --split 2024 --weather data/weather.csv
+
+# Compare feature sets on the same rows, scored on the ranking they produce
+python src/compare.py
+
+# Predict the size of the change instead of a yes/no label
+python src/regress.py
+
+# Score the model against a mean-reversion baseline
+python src/baselines.py
+python src/where_rf_wins.py
+
+# Daily download speeds from Measurement Lab
+python src/mlab.py --start 2026-06-01 --end 2026-08-31 --out data/mlab_daily.csv
 ```
 
 `panel.csv` is one row per region per quarter:
@@ -131,6 +144,73 @@ inspections can be aimed about three times better.
 The most useful features are the change in speed into the current quarter,
 the number of tiles and tests in a region, and the current speed itself.
 Weather features have not been added yet.
+
+### A single fitted parameter recovers most of the signal
+
+Our first baseline, assuming next quarter looks like this one, predicts no
+change at all and is too weak to learn anything from. The forest's most
+useful feature by a wide margin is how far a region sits from its own
+long-run level, so the honest comparison is against mean reversion: predict
+a fraction of the gap between a region's current speed and its own average,
+with that fraction fitted on the training years.
+
+| Predictor | MAE | Average precision | Recall @10% | @15% | @20% |
+|---|---|---|---|---|---|
+| No change | 0.193 | 0.120 | 11.6% | 17.4% | 23.2% |
+| Seasonal average | 0.206 | 0.143 | 12.1% | 18.4% | 27.4% |
+| **Mean reversion, one parameter** | 0.188 | **0.347** | **34.7%** | 46.3% | 56.3% |
+| Random forest | **0.167** | **0.385** | 33.2% | **50.0%** | **58.9%** |
+
+One line of arithmetic reaches 0.347 average precision against 0.120 for a
+random ranking. The forest adds 0.038 on top of that. Put another way, about
+86% of the predictable structure in this problem is mean reversion.
+
+That is not a reason to drop the model, but it is a reason to be precise
+about what it buys. The forest improves MAE by 11% and finds 3.7 percentage
+points more declining regions within a 15% inspection budget. Whether that
+justifies the extra complexity depends on what an unnecessary inspection
+costs, which public data cannot tell us.
+
+### The forest earns its keep on the large moves
+
+| Size of the actual change | MAE, mean reversion | MAE, forest | Forest closer |
+|---|---|---|---|
+| Smallest quarter | 0.035 | 0.075 | 31% |
+| Small | 0.090 | 0.102 | 53% |
+| Large | 0.176 | 0.161 | 63% |
+| **Largest quarter** | **0.453** | **0.330** | **81%** |
+
+On quiet quarters the simple rule is better and the forest over-reacts. On
+the largest moves the forest is 27% closer and wins four times out of five.
+The gain is concentrated rather than spread thinly, and it sits exactly
+where maintenance planning needs it: the regions about to fall a long way.
+
+### Regression beats classification where it matters
+
+| | Average precision | Recall @10% | @15% | @20% | MAE |
+|---|---|---|---|---|---|
+| Classifier, probability of a >20% drop | 0.393 | 34.7% | 44.7% | 55.8% | – |
+| Regressor, size of the change | 0.385 | 33.2% | **50.0%** | **58.9%** | 0.167 |
+
+Ranking quality is about the same, but at the inspection budgets that would
+be used in practice the regressor finds more. It also drops the arbitrary
+20% threshold and keeps the magnitude, so a region can be reported as
+"expected to fall 35%" rather than "0.6 probability of decline".
+
+### Multi-quarter history helps; weather does not
+
+| Features | Average precision | Recall @15% |
+|---|---|---|
+| Current quarter only | 0.370 | 46.3% |
+| **+ multi-quarter history** | **0.393** | 44.7% |
+| + weather | 0.362 | 44.2% |
+| + both | 0.388 | **47.4%** |
+
+Four of the seven most useful features are the ones describing how a region
+has been moving rather than where it is: its position relative to its own
+long-run level, and its change over the last one, two and three quarters. A
+region at 50 Mbit/s that fell from 80 and one that climbed from 30 face very
+different next quarters, and a snapshot cannot tell them apart.
 
 ### Weather adds nothing at this granularity
 
@@ -202,7 +282,10 @@ our plan from tile-level to region-level modelling.
 - [x] Add quarterly weather features (Open-Meteo, in place of BoM)
 - [x] Baselines and a first random forest, validated by time
 - [x] Report recall separately for urban, outer suburban and regional areas
-- [ ] Tune the decision threshold against an inspection budget
+- [x] Evaluate against an inspection budget rather than a fixed threshold
+- [x] Test the model against a mean-reversion baseline
+- [ ] Daily-resolution check of the weather question using M-Lab
+- [ ] Variable region size so sparse areas have enough data to model
 - [ ] Produce the maintenance priority ranking
 
 ## Notes
